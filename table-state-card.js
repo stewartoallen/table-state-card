@@ -25,6 +25,8 @@ class TableStateCard extends HTMLElement {
     this._error = "";
     this._lastFetchKey = "";
     this.shadowRoot.addEventListener("click", (event) => this._handleClick(event));
+    this.shadowRoot.addEventListener("pointermove", (event) => this._handleSparklinePointerMove(event));
+    this.shadowRoot.addEventListener("pointerleave", () => this._hideTooltip());
   }
 
   setConfig(config) {
@@ -257,6 +259,27 @@ class TableStateCard extends HTMLElement {
         .spark path.fill {
           fill: var(--sparkline-fill-color, color-mix(in srgb, var(--primary-color) 18%, transparent));
         }
+
+        .tooltip {
+          position: fixed;
+          z-index: 10;
+          display: none;
+          max-width: min(220px, calc(100vw - 24px));
+          padding: 6px 8px;
+          border-radius: 4px;
+          background: var(--ha-card-background, var(--card-background-color));
+          border: 1px solid var(--divider-color);
+          box-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0, 0, 0, 0.24));
+          color: var(--primary-text-color);
+          font-size: 12px;
+          line-height: 1.35;
+          pointer-events: none;
+          white-space: nowrap;
+        }
+
+        .tooltip .time {
+          color: var(--secondary-text-color);
+        }
       </style>
       <ha-card style="--row-height:${this._escapeAttr(rowHeight)};${this._viewLayoutStyle()}">
         ${this._config.title ? `<div class="header">${this._escape(this._config.title)}</div>` : ""}
@@ -275,6 +298,7 @@ class TableStateCard extends HTMLElement {
               : `<div class="row"><div class="cell">No entities configured</div></div>`
           }
         </div>
+        <div class="tooltip" role="tooltip"></div>
       </ha-card>
     `;
   }
@@ -333,7 +357,10 @@ class TableStateCard extends HTMLElement {
     const series = this._history.get(entityId) || [];
     const color = column.color || entry.color || "var(--primary-color)";
     const fill = column.fill || entry.fill || "color-mix(in srgb, var(--primary-color) 18%, transparent)";
-    return `<div class="cell sparkline" style="${this._cellStyle(column)};--sparkline-color:${this._escapeAttr(color)};--sparkline-fill-color:${this._escapeAttr(
+    const decimals = this._decimals(column, entry);
+    return `<div class="cell sparkline" data-history-entity-id="${this._escapeAttr(entityId || "")}" data-decimals="${this._escapeAttr(
+      decimals ?? ""
+    )}" style="${this._cellStyle(column)};--sparkline-color:${this._escapeAttr(color)};--sparkline-fill-color:${this._escapeAttr(
       fill
     )}">${this._sparklineSvg(series)}</div>`;
   }
@@ -460,6 +487,92 @@ class TableStateCard extends HTMLElement {
       this._error = err?.message || String(err);
       this._render();
     }
+  }
+
+  _handleSparklinePointerMove(event) {
+    const cell = event.target.closest?.(".cell.sparkline");
+    if (!cell) {
+      this._hideTooltip();
+      return;
+    }
+
+    const entityId = cell.dataset.historyEntityId;
+    const series = this._history.get(entityId) || [];
+    const points = series
+      .map((item) => ({
+        item,
+        time: Date.parse(item.last_changed || item.last_updated),
+        value: Number(item.state),
+      }))
+      .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value))
+      .sort((a, b) => a.time - b.time);
+
+    if (points.length === 0) {
+      this._hideTooltip();
+      return;
+    }
+
+    const rect = cell.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)));
+    const minTime = points[0].time;
+    const maxTime = points[points.length - 1].time;
+    const targetTime = minTime + ratio * Math.max(1, maxTime - minTime);
+    const point = this._nearestPoint(points, targetTime);
+    const decimals = cell.dataset.decimals === "" ? undefined : Number(cell.dataset.decimals);
+
+    this._showTooltip(event.clientX, event.clientY, {
+      time: point.time,
+      value: this._formatHistoryValue(entityId, point.item.state, decimals),
+    });
+  }
+
+  _nearestPoint(points, targetTime) {
+    let best = points[0];
+    let bestDistance = Math.abs(best.time - targetTime);
+    for (let index = 1; index < points.length; index += 1) {
+      const distance = Math.abs(points[index].time - targetTime);
+      if (distance > bestDistance) break;
+      best = points[index];
+      bestDistance = distance;
+    }
+    return best;
+  }
+
+  _formatHistoryValue(entityId, value, decimals) {
+    const unit = this._hass?.states?.[entityId]?.attributes?.unit_of_measurement;
+    const formatted = this._formatValue(value, Number.isFinite(decimals) ? decimals : undefined);
+    return unit ? `${formatted} ${unit}` : formatted;
+  }
+
+  _showTooltip(x, y, detail) {
+    const tooltip = this.shadowRoot.querySelector(".tooltip");
+    if (!tooltip) return;
+
+    tooltip.innerHTML = `<div>${this._escape(detail.value)}</div><div class="time">${this._escape(
+      this._formatTime(detail.time)
+    )}</div>`;
+    tooltip.style.display = "block";
+
+    const offset = 12;
+    const rect = tooltip.getBoundingClientRect();
+    const left = Math.min(window.innerWidth - rect.width - 8, x + offset);
+    const top = Math.min(window.innerHeight - rect.height - 8, y + offset);
+    tooltip.style.left = `${Math.max(8, left)}px`;
+    tooltip.style.top = `${Math.max(8, top)}px`;
+  }
+
+  _hideTooltip() {
+    const tooltip = this.shadowRoot?.querySelector(".tooltip");
+    if (tooltip) tooltip.style.display = "none";
+  }
+
+  _formatTime(time) {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(time));
   }
 
   _cssSize(value, fallback) {

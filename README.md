@@ -121,7 +121,7 @@ Supported column types:
 - `toggle`: compact toggle button using `homeassistant.toggle`
 - `name`: row label
 - `value` or `state`: current state with unit
-- `sparkline` or `history`: compact SVG sparkline from history
+- `sparkline` or `history`: compact SVG sparkline from history, with hover values
 
 Each column can specify a CSS grid width:
 
