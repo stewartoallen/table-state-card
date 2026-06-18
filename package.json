@@ -4,6 +4,10 @@
   "description": "Compact Home Assistant Lovelace table with toggles, values, and sparklines.",
   "type": "module",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stewartoallen/table-state-card.git"
+  },
   "scripts": {
     "check": "node --check table-state-card.js"
   },
@@ -11,8 +15,11 @@
     "home-assistant",
     "lovelace",
     "lovelace-card",
+    "custom-card",
+    "dashboard",
     "table",
-    "sparkline"
+    "sparkline",
+    "hacs"
   ],
   "license": "MIT"
 }

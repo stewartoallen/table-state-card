@@ -6,6 +6,39 @@ It is intended for dense operational views where stock entity rows, graph cards,
 
 ## Installation
 
+### HACS
+
+1. Open HACS in Home Assistant.
+2. Add this repository as a custom repository:
+
+```text
+https://github.com/stewartoallen/table-state-card
+```
+
+3. Select category **Dashboard**.
+4. Install **Table State Card**.
+5. Refresh the browser.
+
+HACS should add the dashboard resource automatically. If you need to add it manually, use:
+
+```text
+/hacsfiles/table-state-card/table-state-card.js
+```
+
+Resource type:
+
+```text
+JavaScript module
+```
+
+### Manual Install
+
+Copy `table-state-card.js` into:
+
+```text
+/config/www/community/table-state-card/table-state-card.js
+```
+
 Add this dashboard resource:
 
 ```text
@@ -62,7 +95,7 @@ entities:
 | `hours_to_show` | number | `6` | Sparkline history range in hours. |
 | `refresh_interval` | number | `300` | Seconds between history refreshes. |
 | `row_height` | number/string | `28` | Row height in pixels, or any CSS size. |
-| `column_span` | number | none | Suggested section-grid column span. Also applies `grid-column: span <value>` to the card host. |
+| `column_span` | number | none | Suggested Home Assistant section-grid column span. |
 | `view_layout` | object | none | Optional HA/layout-card layout options such as `grid-column`. |
 | `entities[].entity` | string | none | Main row entity. Used for toggle/value/history unless overridden. |
 | `entities[].name` | string | friendly name | Display name. |
