@@ -1,0 +1,18 @@
+{
+  "name": "table-state-card",
+  "version": "0.1.0",
+  "description": "Compact Home Assistant Lovelace table with toggles, values, and sparklines.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "check": "node --check table-state-card.js"
+  },
+  "keywords": [
+    "home-assistant",
+    "lovelace",
+    "lovelace-card",
+    "table",
+    "sparkline"
+  ],
+  "license": "MIT"
+}
