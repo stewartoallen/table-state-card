@@ -28,6 +28,7 @@ title: Zones
 hours_to_show: 6
 refresh_interval: 300
 row_height: 26
+column_span: 2
 columns:
   - type: toggle
     key: fan
@@ -61,6 +62,8 @@ entities:
 | `hours_to_show` | number | `6` | Sparkline history range in hours. |
 | `refresh_interval` | number | `300` | Seconds between history refreshes. |
 | `row_height` | number/string | `28` | Row height in pixels, or any CSS size. |
+| `column_span` | number | none | Suggested section-grid column span. Also applies `grid-column: span <value>` to the card host. |
+| `view_layout` | object | none | Optional HA/layout-card layout options such as `grid-column`. |
 | `entities[].entity` | string | none | Main row entity. Used for toggle/value/history unless overridden. |
 | `entities[].name` | string | friendly name | Display name. |
 | `entities[].toggle_entity` | string | `entity` | Entity toggled by the toggle column. |
@@ -108,6 +111,22 @@ entities:
 ```
 
 You can also set `entity` directly on a column, or use row-level `toggle_entity`, `value_entity`, and `history_entity`.
+
+## Width
+
+For Home Assistant sections/grid layouts, use `column_span`:
+
+```yaml
+type: custom:table-state-card
+column_span: 2
+```
+
+For layout-card or raw CSS grid layouts, use `view_layout`:
+
+```yaml
+view_layout:
+  grid-column: span 2
+```
 
 ## Development
 

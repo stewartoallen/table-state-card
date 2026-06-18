@@ -37,6 +37,11 @@ class TableStateCard extends HTMLElement {
     this._render();
   }
 
+  getGridOptions() {
+    const span = Number(this._config?.column_span);
+    return Number.isFinite(span) && span > 0 ? { columns: Math.round(span) } : {};
+  }
+
   set hass(hass) {
     this._hass = hass;
     if (!this._config) return;
@@ -129,17 +134,19 @@ class TableStateCard extends HTMLElement {
 
     const columns = this._columns();
     const rows = this._entityConfigs().filter((entry) => this._rowHasContent(entry, columns));
-    const template = columns.map((column) => this._columnWidth(column)).join(" ");
     const rowHeight = this._cssSize(this._config.row_height, "28px");
 
     this.shadowRoot.innerHTML = `
       <style>
         :host {
           display: block;
+          width: 100%;
+          grid-column: ${this._config.column_span ? `span ${this._escapeAttr(this._config.column_span)}` : "1 / -1"};
         }
 
         ha-card {
           overflow: hidden;
+          width: 100%;
         }
 
         .header {
@@ -161,17 +168,17 @@ class TableStateCard extends HTMLElement {
         }
 
         .table {
-          display: grid;
-          grid-auto-rows: var(--row-height);
+          display: flex;
+          flex-direction: column;
           padding: 6px 8px 8px;
         }
 
         .row {
-          display: grid;
-          grid-template-columns: var(--columns);
+          display: flex;
           min-width: 0;
+          min-height: var(--row-height);
           align-items: center;
-          column-gap: 8px;
+          gap: 8px;
           border-top: 1px solid var(--divider-color);
         }
 
@@ -236,13 +243,20 @@ class TableStateCard extends HTMLElement {
           fill: var(--sparkline-fill-color, color-mix(in srgb, var(--primary-color) 18%, transparent));
         }
       </style>
-      <ha-card style="--columns:${this._escapeAttr(template)};--row-height:${this._escapeAttr(rowHeight)}">
+      <ha-card style="--row-height:${this._escapeAttr(rowHeight)};${this._viewLayoutStyle()}">
         ${this._config.title ? `<div class="header">${this._escape(this._config.title)}</div>` : ""}
         ${this._loading || this._error ? `<div class="status ${this._error ? "error" : ""}">${this._escape(this._error || "Loading history...")}</div>` : ""}
         <div class="table">
           ${
             rows.length
-              ? rows.map((entry) => `<div class="row">${columns.map((column) => this._cellHtml(column, entry)).join("")}</div>`).join("")
+              ? rows
+                  .map(
+                    (entry) =>
+                      `<div class="row">${columns
+                        .map((column) => this._cellHtml(column, entry))
+                        .join("")}</div>`
+                  )
+                  .join("")
               : `<div class="row"><div class="cell">No entities configured</div></div>`
           }
         </div>
@@ -259,10 +273,24 @@ class TableStateCard extends HTMLElement {
     return "minmax(0, 1fr)";
   }
 
+  _viewLayoutStyle() {
+    const layout = this._config?.view_layout;
+    if (!layout || typeof layout !== "object") return "";
+
+    return Object.entries(layout)
+      .filter(([key, value]) => key.startsWith("grid-") && value !== undefined && value !== null && value !== "")
+      .map(([key, value]) => `${key}:${this._escapeAttr(value)}`)
+      .join(";");
+  }
+
   _cellHtml(column, entry) {
     const type = this._columnType(column);
     if (type === "toggle") return this._toggleCell(entry, column);
-    if (type === "name") return `<div class="cell name" title="${this._escapeAttr(this._name(entry))}">${this._escape(this._name(entry))}</div>`;
+    if (type === "name") {
+      return `<div class="cell name" style="${this._cellStyle(column)}" title="${this._escapeAttr(this._name(entry))}">${this._escape(
+        this._name(entry)
+      )}</div>`;
+    }
     if (type === "sparkline" || type === "history") return this._sparklineCell(entry, column);
     return this._valueCell(entry, column);
   }
@@ -272,13 +300,15 @@ class TableStateCard extends HTMLElement {
     const stateObj = this._hass?.states?.[entityId];
     const state = String(stateObj?.state || "").toLowerCase();
     const disabled = entityId ? "" : " disabled";
-    return `<div class="cell"><button class="toggle" data-action="toggle" data-entity-id="${this._escapeAttr(entityId || "")}" data-state="${this._escapeAttr(state)}" title="${this._escapeAttr(entityId || "")}" type="button"${disabled}>toggle</button></div>`;
+    return `<div class="cell" style="${this._cellStyle(column)}"><button class="toggle" data-action="toggle" data-entity-id="${this._escapeAttr(
+      entityId || ""
+    )}" data-state="${this._escapeAttr(state)}" title="${this._escapeAttr(entityId || "")}" type="button"${disabled}>toggle</button></div>`;
   }
 
   _valueCell(entry, column) {
     const entityId = this._resolveEntity(entry, column, "value");
     const value = this._formatState(entityId);
-    return `<div class="cell value" title="${this._escapeAttr(entityId || "")}">${this._escape(value)}</div>`;
+    return `<div class="cell value" style="${this._cellStyle(column)}" title="${this._escapeAttr(entityId || "")}">${this._escape(value)}</div>`;
   }
 
   _sparklineCell(entry, column) {
@@ -286,7 +316,25 @@ class TableStateCard extends HTMLElement {
     const series = this._history.get(entityId) || [];
     const color = column.color || entry.color || "var(--primary-color)";
     const fill = column.fill || entry.fill || "color-mix(in srgb, var(--primary-color) 18%, transparent)";
-    return `<div class="cell" style="--sparkline-color:${this._escapeAttr(color)};--sparkline-fill-color:${this._escapeAttr(fill)}">${this._sparklineSvg(series)}</div>`;
+    return `<div class="cell" style="${this._cellStyle(column)};--sparkline-color:${this._escapeAttr(color)};--sparkline-fill-color:${this._escapeAttr(
+      fill
+    )}">${this._sparklineSvg(series)}</div>`;
+  }
+
+  _cellStyle(column) {
+    return `flex:${this._escapeAttr(this._columnFlex(column))}`;
+  }
+
+  _columnFlex(column) {
+    const width = String(this._columnWidth(column)).trim();
+    const minmax = width.match(/^minmax\(([^,]+),\s*([0-9.]+)fr\)$/);
+    if (minmax) return `${Number(minmax[2]) || 1} 1 ${minmax[1].trim()}`;
+
+    const fr = width.match(/^([0-9.]+)fr$/);
+    if (fr) return `${Number(fr[1]) || 1} 1 0`;
+
+    if (width === "max-content" || width === "min-content" || width === "auto") return "0 0 auto";
+    return `0 0 ${width}`;
   }
 
   _sparklineSvg(series) {
@@ -361,14 +409,21 @@ class TableStateCard extends HTMLElement {
     return unit ? `${state} ${unit}` : String(state);
   }
 
-  _handleClick(event) {
+  async _handleClick(event) {
     const button = event.target.closest?.('button[data-action="toggle"]');
     if (!button) return;
 
+    event.preventDefault();
+    event.stopPropagation();
     const entityId = button.dataset.entityId;
     if (!entityId || !this._hass) return;
 
-    this._hass.callService("homeassistant", "toggle", { entity_id: entityId });
+    try {
+      await this._hass.callService("homeassistant", "toggle", { entity_id: entityId });
+    } catch (err) {
+      this._error = err?.message || String(err);
+      this._render();
+    }
   }
 
   _cssSize(value, fallback) {
