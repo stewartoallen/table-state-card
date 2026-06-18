@@ -4,6 +4,10 @@ Table State Card is a compact Home Assistant Lovelace table for repeated rows of
 
 It is intended for dense operational views where stock entity rows, graph cards, and stacks use too much padding.
 
+## Preview
+
+![Table State Card preview](preview.svg)
+
 ## Installation
 
 ### HACS
