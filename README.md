@@ -67,6 +67,8 @@ refresh_interval: 300
 row_height: 26
 column_span: 2
 decimals: 1
+sparkline_decimals: 1
+resolution_minutes: 5
 columns:
   - type: toggle
     key: fan
@@ -80,6 +82,7 @@ columns:
   - type: sparkline
     key: temperature
     width: minmax(90px, 1.4fr)
+    hours_to_show: 12
 entities:
   - entity: switch.office_fan
     name: Office
@@ -101,7 +104,10 @@ entities:
 | `hours_to_show` | number | `6` | Sparkline history range in hours. |
 | `refresh_interval` | number | `300` | Seconds between history refreshes. |
 | `row_height` | number/string | `28` | Row height in pixels, or any CSS size. |
-| `decimals` | number | none | Global decimal places for numeric value columns. |
+| `decimals` | number | none | Global decimal places for numeric value columns and sparkline hover values. |
+| `sparkline_decimals` | number | `decimals` | Global decimal places for sparkline hover values. |
+| `resolution_minutes` | number | `0` | Global sparkline averaging interval in minutes. `0` uses raw history samples. |
+| `bucket_minutes` | number | `0` | Alias for `resolution_minutes`. |
 | `column_span` | number | none | Suggested Home Assistant section-grid column span. |
 | `view_layout` | object | none | Optional HA/layout-card layout options such as `grid-column`. |
 | `entities[].entity` | string | none | Main row entity. Used for toggle/value/history unless overridden. |
@@ -110,6 +116,10 @@ entities:
 | `entities[].value_entity` | string | `entity` | Entity displayed by the value column. |
 | `entities[].history_entity` | string | `value_entity`/`entity` | Entity used for sparkline history. |
 | `entities[].decimals` | number | global | Row-level decimal places for numeric value columns. |
+| `entities[].sparkline_decimals` | number | global | Row-level decimal places for sparkline hover values. |
+| `entities[].<key>_decimals` | number | row/global | Decimal places for a keyed sparkline/value entity such as `temperature_decimals`. |
+| `entities[].hours_to_show` | number | global | Row-level sparkline history range in hours. |
+| `entities[].resolution_minutes` | number | global | Row-level sparkline averaging interval in minutes. |
 | `entities[].<key>` | string | none | Named entity reference used by a column with matching `key`, `name`, or `id`. |
 | `entities[].color` | string | theme primary | Sparkline stroke color. |
 | `entities[].fill` | string | theme primary tint | Sparkline fill color. |
@@ -134,9 +144,42 @@ columns:
     decimals: 1
   - type: sparkline
     width: minmax(90px, 1fr)
+    sparkline_decimals: 1
+    hours_to_show: 12
+    resolution_minutes: 5
 ```
 
-For numeric value columns, `decimals` can be set globally, on a row, or on a column. Column settings take priority.
+For numeric displays, `decimals` can be set globally, on a row, or on a column. The global value applies to value cells and sparkline hover values. More specific row or column settings take priority.
+
+For keyed row entities, use `<key>_decimals` when different columns in the same row need different precision:
+
+```yaml
+columns:
+  - type: value
+    key: amps
+  - type: sparkline
+    key: temperature
+entities:
+  - name: Floor
+    amps: sensor.floor_current
+    temperature: sensor.floor_temperature
+    amps_decimals: 2
+    temperature_decimals: 1
+```
+
+Sparkline range and resolution can be set globally, on a row, or on a sparkline column:
+
+```yaml
+hours_to_show: 24
+resolution_minutes: 15
+columns:
+  - type: sparkline
+    key: watts
+    hours_to_show: 6
+    resolution_minutes: 5
+```
+
+`hours_to_show` controls the visible sparkline span. `resolution_minutes` averages raw history samples into fixed time buckets before drawing and before hover lookup.
 
 Columns can resolve entities several ways. The most flexible pattern is to give a column a `key` and put matching entity IDs on each row:
 

@@ -25,6 +25,7 @@ class TableStateCard extends HTMLElement {
     this._error = "";
     this._lastFetchKey = "";
     this.shadowRoot.addEventListener("click", (event) => this._handleClick(event));
+    this.shadowRoot.addEventListener("keydown", (event) => this._handleKeyDown(event));
     this.shadowRoot.addEventListener("pointermove", (event) => this._handleSparklinePointerMove(event));
     this.shadowRoot.addEventListener("pointerleave", () => this._hideTooltip());
   }
@@ -39,6 +40,8 @@ class TableStateCard extends HTMLElement {
       refresh_interval: 300,
       row_height: 28,
       decimals: undefined,
+      sparkline_decimals: undefined,
+      resolution_minutes: 0,
       columns: ["toggle", "name", "value", "sparkline"],
       ...config,
     };
@@ -58,7 +61,7 @@ class TableStateCard extends HTMLElement {
     const now = Date.now();
     const fetchKey = [
       this._historyEntityIds().join(","),
-      this._config.hours_to_show,
+      this._maxHoursToShow(),
       Math.floor(now / (this._config.refresh_interval * 1000)),
     ].join("|");
 
@@ -98,6 +101,15 @@ class TableStateCard extends HTMLElement {
     ];
   }
 
+  _maxHoursToShow() {
+    const hours = this._entityConfigs().flatMap((entry) =>
+      this._columns()
+        .filter((column) => this._columnType(column) === "sparkline" || this._columnType(column) === "history")
+        .map((column) => this._hoursToShow(column, entry))
+    );
+    return Math.max(1, ...hours);
+  }
+
   async _fetchHistory() {
     if (!this._hass || !this._config) return;
 
@@ -110,7 +122,7 @@ class TableStateCard extends HTMLElement {
 
     const end = new Date();
     end.setSeconds(0, 0);
-    const start = new Date(end.getTime() - Number(this._config.hours_to_show || 6) * 60 * 60 * 1000);
+    const start = new Date(end.getTime() - this._maxHoursToShow() * 60 * 60 * 1000);
     const params = new URLSearchParams({
       filter_entity_id: entityIds.join(","),
       end_time: end.toISOString(),
@@ -231,15 +243,25 @@ class TableStateCard extends HTMLElement {
           padding: 0;
         }
 
+        .toggle-cell {
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+        }
+
+        .toggle-cell .toggle {
+          pointer-events: none;
+        }
+
+        .toggle-cell:focus-visible {
+          outline: 2px solid var(--primary-color);
+          outline-offset: 2px;
+        }
+
         .toggle[data-state="on"],
         .toggle[data-state="home"] {
           background: var(--state-active-color, #fdd835);
           border-color: var(--state-active-color, #fdd835);
-        }
-
-        .toggle:focus-visible {
-          outline: 2px solid var(--primary-color);
-          outline-offset: 2px;
         }
 
         .spark {
@@ -338,10 +360,13 @@ class TableStateCard extends HTMLElement {
     const entityId = this._resolveEntity(entry, column, "toggle");
     const stateObj = this._hass?.states?.[entityId];
     const state = String(stateObj?.state || "").toLowerCase();
-    const disabled = entityId ? "" : " disabled";
-    return `<div class="cell" style="${this._cellStyle(column)}"><button class="toggle" data-action="toggle" data-entity-id="${this._escapeAttr(
+    const disabled = entityId ? "false" : "true";
+    const tabindex = entityId ? "0" : "-1";
+    return `<div class="cell toggle-cell" data-action="toggle" data-entity-id="${this._escapeAttr(
       entityId || ""
-    )}" data-state="${this._escapeAttr(state)}" title="${this._escapeAttr(entityId || "")}" type="button"${disabled}>toggle</button></div>`;
+    )}" aria-disabled="${disabled}" role="button" tabindex="${tabindex}" style="${this._cellStyle(column)}"><button class="toggle" data-state="${this._escapeAttr(
+      state
+    )}" title="${this._escapeAttr(entityId || "")}" type="button" tabindex="-1">toggle</button></div>`;
   }
 
   _valueCell(entry, column) {
@@ -357,12 +382,17 @@ class TableStateCard extends HTMLElement {
     const series = this._history.get(entityId) || [];
     const color = column.color || entry.color || "var(--primary-color)";
     const fill = column.fill || entry.fill || "color-mix(in srgb, var(--primary-color) 18%, transparent)";
-    const decimals = this._decimals(column, entry);
+    const decimals = this._sparklineDecimals(column, entry);
+    const hours = this._hoursToShow(column, entry);
+    const resolution = this._resolutionMinutes(column, entry);
+    const points = this._pointsFromSeries(series, hours, resolution);
     return `<div class="cell sparkline" data-history-entity-id="${this._escapeAttr(entityId || "")}" data-decimals="${this._escapeAttr(
       decimals ?? ""
+    )}" data-hours="${this._escapeAttr(hours)}" data-resolution="${this._escapeAttr(
+      resolution
     )}" style="${this._cellStyle(column)};--sparkline-color:${this._escapeAttr(color)};--sparkline-fill-color:${this._escapeAttr(
       fill
-    )}">${this._sparklineSvg(series)}</div>`;
+    )}">${this._sparklineSvg(points)}</div>`;
   }
 
   _cellStyle(column) {
@@ -381,15 +411,7 @@ class TableStateCard extends HTMLElement {
     return `0 0 ${width}`;
   }
 
-  _sparklineSvg(series) {
-    const points = (series || [])
-      .map((item) => ({
-        time: Date.parse(item.last_changed || item.last_updated),
-        value: Number(item.state),
-      }))
-      .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value))
-      .sort((a, b) => a.time - b.time);
-
+  _sparklineSvg(points) {
     if (points.length < 2) {
       return `<svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg>`;
     }
@@ -462,8 +484,12 @@ class TableStateCard extends HTMLElement {
     return numeric.toFixed(decimals);
   }
 
-  _decimals(column = {}, entry = {}) {
-    const value = column.decimals ?? entry.decimals ?? this._config?.decimals;
+  _decimals(column = {}, entry = {}, inheritMatchingValueColumn = false) {
+    const value =
+      column.decimals ??
+      (inheritMatchingValueColumn ? this._matchingValueColumn(column)?.decimals : undefined) ??
+      entry.decimals ??
+      this._config?.decimals;
     if (value === undefined || value === null || value === "") return undefined;
 
     const decimals = Number(value);
@@ -472,13 +498,108 @@ class TableStateCard extends HTMLElement {
     return Math.max(0, Math.trunc(decimals));
   }
 
+  _sparklineDecimals(column = {}, entry = {}) {
+    const key = column.key || column.name || column.id;
+    const keyedDecimals = key ? entry[`${key}_decimals`] : undefined;
+    const value =
+      column.decimals ??
+      column.sparkline_decimals ??
+      keyedDecimals ??
+      entry.sparkline_decimals ??
+      entry.decimals ??
+      this._matchingValueColumn(column)?.decimals ??
+      this._config?.sparkline_decimals ??
+      this._config?.decimals;
+    if (value === undefined || value === null || value === "") return undefined;
+
+    const decimals = Number(value);
+    if (!Number.isFinite(decimals)) return undefined;
+
+    return Math.max(0, Math.trunc(decimals));
+  }
+
+  _matchingValueColumn(column) {
+    const key = column.key || column.name || column.id;
+    if (!key) return undefined;
+
+    return this._columns().find((candidate) => {
+      const type = this._columnType(candidate);
+      const candidateKey = candidate.key || candidate.name || candidate.id;
+      return (type === "value" || type === "state") && candidateKey === key;
+    });
+  }
+
+  _hoursToShow(column = {}, entry = {}) {
+    const value =
+      column.hours_to_show ??
+      column.sparkline_hours_to_show ??
+      entry.hours_to_show ??
+      entry.sparkline_hours_to_show ??
+      this._config?.sparkline_hours_to_show ??
+      this._config?.hours_to_show ??
+      6;
+    const hours = Number(value);
+    return Number.isFinite(hours) && hours > 0 ? hours : 6;
+  }
+
+  _resolutionMinutes(column = {}, entry = {}) {
+    const value =
+      column.resolution_minutes ??
+      column.bucket_minutes ??
+      entry.resolution_minutes ??
+      entry.bucket_minutes ??
+      this._config?.resolution_minutes ??
+      this._config?.bucket_minutes ??
+      0;
+    const minutes = Number(value);
+    return Number.isFinite(minutes) && minutes > 0 ? minutes : 0;
+  }
+
+  _pointsFromSeries(series, hoursToShow, resolutionMinutes) {
+    const cutoff = Date.now() - hoursToShow * 60 * 60 * 1000;
+    const points = (series || [])
+      .map((item) => ({
+        item,
+        time: Date.parse(item.last_changed || item.last_updated),
+        value: Number(item.state),
+      }))
+      .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value) && point.time >= cutoff)
+      .sort((a, b) => a.time - b.time);
+
+    if (!resolutionMinutes || points.length < 2) return points;
+
+    return this._bucketPoints(points, resolutionMinutes);
+  }
+
+  _bucketPoints(points, resolutionMinutes) {
+    const bucketMs = resolutionMinutes * 60 * 1000;
+    const buckets = new Map();
+
+    for (const point of points) {
+      const bucketTime = Math.floor(point.time / bucketMs) * bucketMs;
+      const bucket = buckets.get(bucketTime) || { time: bucketTime, sum: 0, count: 0, item: point.item };
+      bucket.sum += point.value;
+      bucket.count += 1;
+      bucket.item = point.item;
+      buckets.set(bucketTime, bucket);
+    }
+
+    return [...buckets.values()]
+      .map((bucket) => ({
+        item: { ...bucket.item, state: String(bucket.sum / bucket.count) },
+        time: bucket.time,
+        value: bucket.sum / bucket.count,
+      }))
+      .sort((a, b) => a.time - b.time);
+  }
+
   async _handleClick(event) {
-    const button = event.target.closest?.('button[data-action="toggle"]');
-    if (!button) return;
+    const target = event.target.closest?.('[data-action="toggle"]');
+    if (!target || target.getAttribute("aria-disabled") === "true") return;
 
     event.preventDefault();
     event.stopPropagation();
-    const entityId = button.dataset.entityId;
+    const entityId = target.dataset.entityId;
     if (!entityId || !this._hass) return;
 
     try {
@@ -487,6 +608,16 @@ class TableStateCard extends HTMLElement {
       this._error = err?.message || String(err);
       this._render();
     }
+  }
+
+  _handleKeyDown(event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+
+    const target = event.target.closest?.('[data-action="toggle"]');
+    if (!target) return;
+
+    event.preventDefault();
+    target.click();
   }
 
   _handleSparklinePointerMove(event) {
@@ -498,14 +629,9 @@ class TableStateCard extends HTMLElement {
 
     const entityId = cell.dataset.historyEntityId;
     const series = this._history.get(entityId) || [];
-    const points = series
-      .map((item) => ({
-        item,
-        time: Date.parse(item.last_changed || item.last_updated),
-        value: Number(item.state),
-      }))
-      .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value))
-      .sort((a, b) => a.time - b.time);
+    const hours = Number(cell.dataset.hours) || Number(this._config?.hours_to_show) || 6;
+    const resolution = Number(cell.dataset.resolution) || 0;
+    const points = this._pointsFromSeries(series, hours, resolution);
 
     if (points.length === 0) {
       this._hideTooltip();
