@@ -83,6 +83,8 @@ columns:
     key: temperature
     width: minmax(90px, 1.4fr)
     hours_to_show: 12
+    min: 65
+    max: 80
 entities:
   - entity: switch.office_fan
     name: Office
@@ -147,6 +149,8 @@ columns:
     sparkline_decimals: 1
     hours_to_show: 12
     resolution_minutes: 5
+    min: 65
+    max: 80
 ```
 
 For numeric displays, `decimals` can be set globally, on a row, or on a column. The global value applies to value cells and sparkline hover values. More specific row or column settings take priority.
@@ -180,6 +184,16 @@ columns:
 ```
 
 `hours_to_show` controls the visible sparkline span. `resolution_minutes` averages raw history samples into fixed time buckets before drawing and before hover lookup.
+
+Sparkline columns can set `min` and/or `max` to fix the vertical range for that column:
+
+```yaml
+columns:
+  - type: sparkline
+    key: temperature
+    min: 65
+    max: 80
+```
 
 Columns can resolve entities several ways. The most flexible pattern is to give a column a `key` and put matching entity IDs on each row:
 

@@ -1,4 +1,4 @@
-const TABLE_STATE_CARD_VERSION = "0.0.7";
+const TABLE_STATE_CARD_VERSION = "0.0.9";
 
 class TableStateCard extends HTMLElement {
   static getConfigElement() {
@@ -392,7 +392,7 @@ class TableStateCard extends HTMLElement {
       resolution
     )}" style="${this._cellStyle(column)};--sparkline-color:${this._escapeAttr(color)};--sparkline-fill-color:${this._escapeAttr(
       fill
-    )}">${this._sparklineSvg(points)}</div>`;
+    )}">${this._sparklineSvg(points, column)}</div>`;
   }
 
   _cellStyle(column) {
@@ -411,20 +411,25 @@ class TableStateCard extends HTMLElement {
     return `0 0 ${width}`;
   }
 
-  _sparklineSvg(points) {
+  _sparklineSvg(points, column = {}) {
     if (points.length < 2) {
       return `<svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg>`;
     }
 
     const minTime = points[0].time;
     const maxTime = points[points.length - 1].time;
-    const minValue = Math.min(...points.map((point) => point.value));
-    const maxValue = Math.max(...points.map((point) => point.value));
+    const autoMinValue = Math.min(...points.map((point) => point.value));
+    const autoMaxValue = Math.max(...points.map((point) => point.value));
+    const configuredMin = this._numberOrUndefined(column.min ?? column.min_value);
+    const configuredMax = this._numberOrUndefined(column.max ?? column.max_value);
+    const minValue = configuredMin ?? autoMinValue;
+    const maxValue = configuredMax ?? autoMaxValue;
     const timeSpan = Math.max(1, maxTime - minTime);
     const valueSpan = Math.max(1, maxValue - minValue);
     const coords = points.map((point) => {
       const x = ((point.time - minTime) / timeSpan) * 100;
-      const y = 22 - ((point.value - minValue) / valueSpan) * 20;
+      const normalized = Math.min(1, Math.max(0, (point.value - minValue) / valueSpan));
+      const y = 22 - normalized * 20;
       return [x, y];
     });
     const line = coords.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`).join(" ");
@@ -553,6 +558,12 @@ class TableStateCard extends HTMLElement {
       0;
     const minutes = Number(value);
     return Number.isFinite(minutes) && minutes > 0 ? minutes : 0;
+  }
+
+  _numberOrUndefined(value) {
+    if (value === undefined || value === null || value === "") return undefined;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : undefined;
   }
 
   _pointsFromSeries(series, hoursToShow, resolutionMinutes) {
