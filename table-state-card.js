@@ -456,13 +456,17 @@ class TableStateCard extends HTMLElement {
   }
 }
 
-customElements.define("table-state-card", TableStateCard);
+if (!customElements.get("table-state-card")) {
+  customElements.define("table-state-card", TableStateCard);
+}
 
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "table-state-card",
-  name: "Table State Card",
-  preview: true,
-  description: "Compact table rows with toggles, values, and history sparklines.",
-  documentationURL: "https://github.com/stewartoallen/table-state-card",
-});
+if (!window.customCards.some((card) => card.type === "table-state-card")) {
+  window.customCards.push({
+    type: "table-state-card",
+    name: "Table State Card",
+    preview: true,
+    description: "Compact table rows with toggles, values, and history sparklines.",
+    documentationURL: "https://github.com/stewartoallen/table-state-card",
+  });
+}
