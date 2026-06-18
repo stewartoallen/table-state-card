@@ -1,4 +1,10 @@
+const TABLE_STATE_CARD_VERSION = "0.0.4";
+
 class TableStateCard extends HTMLElement {
+  static getConfigElement() {
+    return document.createElement("table-state-card-editor");
+  }
+
   static getStubConfig() {
     return {
       type: "custom:table-state-card",
@@ -456,6 +462,31 @@ class TableStateCard extends HTMLElement {
   }
 }
 
+class TableStateCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = config || {};
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+  }
+
+  _render() {
+    if (this.shadowRoot) return;
+    this.attachShadow({ mode: "open" });
+    this.shadowRoot.innerHTML = `
+      <ha-alert alert-type="info">
+        Configure this card in YAML.
+      </ha-alert>
+    `;
+  }
+}
+
+if (!customElements.get("table-state-card-editor")) {
+  customElements.define("table-state-card-editor", TableStateCardEditor);
+}
+
 if (!customElements.get("table-state-card")) {
   customElements.define("table-state-card", TableStateCard);
 }
@@ -470,3 +501,9 @@ if (!window.customCards.some((card) => card.type === "table-state-card")) {
     documentationURL: "https://github.com/stewartoallen/table-state-card",
   });
 }
+
+console.info(
+  `%cTABLE-STATE-CARD%c ${TABLE_STATE_CARD_VERSION} loaded`,
+  "color:#06b6d4;font-weight:700",
+  "color:inherit"
+);
