@@ -141,7 +141,6 @@ class TableStateCard extends HTMLElement {
         :host {
           display: block;
           width: 100%;
-          grid-column: ${this._config.column_span ? `span ${this._escapeAttr(this._config.column_span)}` : "1 / -1"};
         }
 
         ha-card {
@@ -197,8 +196,17 @@ class TableStateCard extends HTMLElement {
         }
 
         .cell.value {
+          min-width: 44px;
           text-align: right;
           font-variant-numeric: tabular-nums;
+        }
+
+        .cell.sparkline {
+          min-width: 60px;
+        }
+
+        .cell[data-empty="true"] {
+          color: var(--secondary-text-color);
         }
 
         .toggle {
@@ -307,8 +315,10 @@ class TableStateCard extends HTMLElement {
 
   _valueCell(entry, column) {
     const entityId = this._resolveEntity(entry, column, "value");
-    const value = this._formatState(entityId);
-    return `<div class="cell value" style="${this._cellStyle(column)}" title="${this._escapeAttr(entityId || "")}">${this._escape(value)}</div>`;
+    const value = this._formatState(entityId, column);
+    return `<div class="cell value" data-empty="${value ? "false" : "true"}" style="${this._cellStyle(column)}" title="${this._escapeAttr(
+      entityId || ""
+    )}">${this._escape(value)}</div>`;
   }
 
   _sparklineCell(entry, column) {
@@ -316,7 +326,7 @@ class TableStateCard extends HTMLElement {
     const series = this._history.get(entityId) || [];
     const color = column.color || entry.color || "var(--primary-color)";
     const fill = column.fill || entry.fill || "color-mix(in srgb, var(--primary-color) 18%, transparent)";
-    return `<div class="cell" style="${this._cellStyle(column)};--sparkline-color:${this._escapeAttr(color)};--sparkline-fill-color:${this._escapeAttr(
+    return `<div class="cell sparkline" style="${this._cellStyle(column)};--sparkline-color:${this._escapeAttr(color)};--sparkline-fill-color:${this._escapeAttr(
       fill
     )}">${this._sparklineSvg(series)}</div>`;
   }
@@ -331,7 +341,7 @@ class TableStateCard extends HTMLElement {
     if (minmax) return `${Number(minmax[2]) || 1} 1 ${minmax[1].trim()}`;
 
     const fr = width.match(/^([0-9.]+)fr$/);
-    if (fr) return `${Number(fr[1]) || 1} 1 0`;
+    if (fr) return `${Number(fr[1]) || 1} 1 0px`;
 
     if (width === "max-content" || width === "min-content" || width === "auto") return "0 0 auto";
     return `0 0 ${width}`;
@@ -400,9 +410,9 @@ class TableStateCard extends HTMLElement {
     return this._hass?.states?.[entityId]?.attributes?.friendly_name || entityId || "";
   }
 
-  _formatState(entityId) {
+  _formatState(entityId, column = {}) {
     const stateObj = this._hass?.states?.[entityId];
-    if (!stateObj) return "";
+    if (!stateObj) return entityId ? column.placeholder || "--" : "";
 
     const state = stateObj.state;
     const unit = stateObj.attributes?.unit_of_measurement;
