@@ -1,4 +1,4 @@
-const TABLE_STATE_CARD_VERSION = "0.0.4";
+const TABLE_STATE_CARD_VERSION = "0.0.7";
 
 class TableStateCard extends HTMLElement {
   static getConfigElement() {
@@ -36,6 +36,7 @@ class TableStateCard extends HTMLElement {
       hours_to_show: 6,
       refresh_interval: 300,
       row_height: 28,
+      decimals: undefined,
       columns: ["toggle", "name", "value", "sparkline"],
       ...config,
     };
@@ -321,7 +322,7 @@ class TableStateCard extends HTMLElement {
 
   _valueCell(entry, column) {
     const entityId = this._resolveEntity(entry, column, "value");
-    const value = this._formatState(entityId, column);
+    const value = this._formatState(entityId, column, entry);
     return `<div class="cell value" data-empty="${value ? "false" : "true"}" style="${this._cellStyle(column)}" title="${this._escapeAttr(
       entityId || ""
     )}">${this._escape(value)}</div>`;
@@ -416,13 +417,32 @@ class TableStateCard extends HTMLElement {
     return this._hass?.states?.[entityId]?.attributes?.friendly_name || entityId || "";
   }
 
-  _formatState(entityId, column = {}) {
+  _formatState(entityId, column = {}, entry = {}) {
     const stateObj = this._hass?.states?.[entityId];
     if (!stateObj) return entityId ? column.placeholder || "--" : "";
 
-    const state = stateObj.state;
+    const state = this._formatValue(stateObj.state, this._decimals(column, entry));
     const unit = stateObj.attributes?.unit_of_measurement;
     return unit ? `${state} ${unit}` : String(state);
+  }
+
+  _formatValue(value, decimals) {
+    if (decimals === undefined) return String(value);
+
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return String(value);
+
+    return numeric.toFixed(decimals);
+  }
+
+  _decimals(column = {}, entry = {}) {
+    const value = column.decimals ?? entry.decimals ?? this._config?.decimals;
+    if (value === undefined || value === null || value === "") return undefined;
+
+    const decimals = Number(value);
+    if (!Number.isFinite(decimals)) return undefined;
+
+    return Math.max(0, Math.trunc(decimals));
   }
 
   async _handleClick(event) {

@@ -66,6 +66,7 @@ hours_to_show: 6
 refresh_interval: 300
 row_height: 26
 column_span: 2
+decimals: 1
 columns:
   - type: toggle
     key: fan
@@ -75,6 +76,7 @@ columns:
   - type: value
     key: temperature
     width: 64px
+    decimals: 0
   - type: sparkline
     key: temperature
     width: minmax(90px, 1.4fr)
@@ -99,6 +101,7 @@ entities:
 | `hours_to_show` | number | `6` | Sparkline history range in hours. |
 | `refresh_interval` | number | `300` | Seconds between history refreshes. |
 | `row_height` | number/string | `28` | Row height in pixels, or any CSS size. |
+| `decimals` | number | none | Global decimal places for numeric value columns. |
 | `column_span` | number | none | Suggested Home Assistant section-grid column span. |
 | `view_layout` | object | none | Optional HA/layout-card layout options such as `grid-column`. |
 | `entities[].entity` | string | none | Main row entity. Used for toggle/value/history unless overridden. |
@@ -106,6 +109,7 @@ entities:
 | `entities[].toggle_entity` | string | `entity` | Entity toggled by the toggle column. |
 | `entities[].value_entity` | string | `entity` | Entity displayed by the value column. |
 | `entities[].history_entity` | string | `value_entity`/`entity` | Entity used for sparkline history. |
+| `entities[].decimals` | number | global | Row-level decimal places for numeric value columns. |
 | `entities[].<key>` | string | none | Named entity reference used by a column with matching `key`, `name`, or `id`. |
 | `entities[].color` | string | theme primary | Sparkline stroke color. |
 | `entities[].fill` | string | theme primary tint | Sparkline fill color. |
@@ -127,9 +131,12 @@ columns:
     width: 24px
   - type: value
     width: max-content
+    decimals: 1
   - type: sparkline
     width: minmax(90px, 1fr)
 ```
+
+For numeric value columns, `decimals` can be set globally, on a row, or on a column. Column settings take priority.
 
 Columns can resolve entities several ways. The most flexible pattern is to give a column a `key` and put matching entity IDs on each row:
 
