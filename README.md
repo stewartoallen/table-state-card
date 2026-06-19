@@ -155,6 +155,8 @@ columns:
     min: 65
     max: 80
     min_color: "#2563eb"
+    color_72: "#22c55e"
+    color_76: "#facc15"
     max_color: "#dc2626"
 ```
 
@@ -211,8 +213,12 @@ columns:
     min: 65
     max: 80
     min_color: "#2563eb"
+    color_72: "#22c55e"
+    color_76: "#facc15"
     max_color: "#dc2626"
 ```
+
+Additional `color_<number>` keys add optional interpolation stops between the endpoints. Endpoint colors are still required to enable color timeline rendering.
 
 Columns can resolve entities several ways. The most flexible pattern is to give a column a `key` and put matching entity IDs on each row:
 

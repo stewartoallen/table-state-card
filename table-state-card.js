@@ -1,4 +1,4 @@
-const TABLE_STATE_CARD_VERSION = "0.1.2";
+const TABLE_STATE_CARD_VERSION = "0.1.3";
 
 class TableStateCard extends HTMLElement {
   static getConfigElement() {
@@ -679,8 +679,7 @@ class TableStateCard extends HTMLElement {
       const x = ((point.time - minTime) / timeSpan) * 100;
       const nextX = ((next.time - minTime) / timeSpan) * 100;
       const width = Math.max(0.35, nextX - x);
-      const ratio = Math.min(1, Math.max(0, (point.value - minValue) / valueSpan));
-      const color = this._interpolateColor(colorRange.min, colorRange.max, ratio);
+      const color = this._colorForSparklineValue(point.value, colorRange, minValue, valueSpan);
       return `<rect x="${x.toFixed(2)}" y="3" width="${width.toFixed(2)}" height="18" fill="${color}"></rect>`;
     });
 
@@ -690,7 +689,51 @@ class TableStateCard extends HTMLElement {
   _sparklineColorRange(column = {}) {
     const min = this._parseColor(column.min_color ?? column.color_min);
     const max = this._parseColor(column.max_color ?? column.color_max);
-    return min && max ? { min, max } : undefined;
+    if (!min || !max) return undefined;
+
+    return { min, max, stops: this._sparklineColorStops(column, min, max) };
+  }
+
+  _sparklineColorStops(column = {}, minColor, maxColor) {
+    const stops = [];
+    const configuredMin = this._numberOrUndefined(column.min ?? column.min_value);
+    const configuredMax = this._numberOrUndefined(column.max ?? column.max_value);
+
+    if (configuredMin !== undefined) stops.push({ value: configuredMin, color: minColor });
+    if (configuredMax !== undefined) stops.push({ value: configuredMax, color: maxColor });
+
+    for (const [key, value] of Object.entries(column)) {
+      const match = key.match(/^color_(-?\d+(?:\.\d+)?)$/);
+      if (!match) continue;
+
+      const stopValue = Number(match[1]);
+      const color = this._parseColor(value);
+      if (Number.isFinite(stopValue) && color) stops.push({ value: stopValue, color });
+    }
+
+    const byValue = new Map();
+    for (const stop of stops) byValue.set(stop.value, stop);
+    return [...byValue.values()].sort((a, b) => a.value - b.value);
+  }
+
+  _colorForSparklineValue(value, colorRange, minValue, valueSpan) {
+    if (colorRange.stops.length >= 2) {
+      const stops = colorRange.stops;
+      if (value <= stops[0].value) return this._rgbColor(stops[0].color);
+      if (value >= stops[stops.length - 1].value) return this._rgbColor(stops[stops.length - 1].color);
+
+      for (let index = 0; index < stops.length - 1; index += 1) {
+        const left = stops[index];
+        const right = stops[index + 1];
+        if (value < left.value || value > right.value) continue;
+
+        const ratio = (value - left.value) / Math.max(1e-9, right.value - left.value);
+        return this._interpolateColor(left.color, right.color, ratio);
+      }
+    }
+
+    const ratio = Math.min(1, Math.max(0, (value - minValue) / valueSpan));
+    return this._interpolateColor(colorRange.min, colorRange.max, ratio);
   }
 
   _parseColor(value) {
@@ -717,6 +760,10 @@ class TableStateCard extends HTMLElement {
 
   _interpolateColor(min, max, ratio) {
     const channels = min.map((value, index) => Math.round(value + (max[index] - value) * ratio));
+    return this._rgbColor(channels);
+  }
+
+  _rgbColor(channels) {
     return `rgb(${channels[0]} ${channels[1]} ${channels[2]})`;
   }
 
@@ -730,6 +777,11 @@ class TableStateCard extends HTMLElement {
       column.max ?? column.max_value ?? "",
       column.min_color ?? column.color_min ?? "",
       column.max_color ?? column.color_max ?? "",
+      Object.entries(column)
+        .filter(([key]) => /^color_(-?\d+(?:\.\d+)?)$/.test(key))
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, value]) => `${key}:${value}`)
+        .join(","),
     ].join("|");
   }
 
