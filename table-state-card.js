@@ -1,4 +1,4 @@
-const TABLE_STATE_CARD_VERSION = "0.1.1";
+const TABLE_STATE_CARD_VERSION = "0.1.2";
 
 class TableStateCard extends HTMLElement {
   static getConfigElement() {
@@ -646,6 +646,7 @@ class TableStateCard extends HTMLElement {
       return `<svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg>`;
     }
 
+    const colorRange = this._sparklineColorRange(column);
     const minTime = points[0].time;
     const maxTime = points[points.length - 1].time;
     const autoMinValue = Math.min(...points.map((point) => point.value));
@@ -656,6 +657,10 @@ class TableStateCard extends HTMLElement {
     const maxValue = configuredMax ?? autoMaxValue;
     const timeSpan = Math.max(1, maxTime - minTime);
     const valueSpan = Math.max(1, maxValue - minValue);
+    if (colorRange) {
+      return this._sparklineColorSvg(points, minTime, timeSpan, minValue, valueSpan, colorRange);
+    }
+
     const coords = points.map((point) => {
       const x = ((point.time - minTime) / timeSpan) * 100;
       const normalized = Math.min(1, Math.max(0, (point.value - minValue) / valueSpan));
@@ -668,6 +673,53 @@ class TableStateCard extends HTMLElement {
     return `<svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"><path class="fill" d="${fill}"></path><path class="line" d="${line}"></path></svg>`;
   }
 
+  _sparklineColorSvg(points, minTime, timeSpan, minValue, valueSpan, colorRange) {
+    const rects = points.slice(0, -1).map((point, index) => {
+      const next = points[index + 1];
+      const x = ((point.time - minTime) / timeSpan) * 100;
+      const nextX = ((next.time - minTime) / timeSpan) * 100;
+      const width = Math.max(0.35, nextX - x);
+      const ratio = Math.min(1, Math.max(0, (point.value - minValue) / valueSpan));
+      const color = this._interpolateColor(colorRange.min, colorRange.max, ratio);
+      return `<rect x="${x.toFixed(2)}" y="3" width="${width.toFixed(2)}" height="18" fill="${color}"></rect>`;
+    });
+
+    return `<svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">${rects.join("")}</svg>`;
+  }
+
+  _sparklineColorRange(column = {}) {
+    const min = this._parseColor(column.min_color ?? column.color_min);
+    const max = this._parseColor(column.max_color ?? column.color_max);
+    return min && max ? { min, max } : undefined;
+  }
+
+  _parseColor(value) {
+    if (!value) return undefined;
+    const color = String(value).trim();
+
+    const hex = color.match(/^#([0-9a-f]{6})$/i);
+    if (hex) {
+      return [0, 2, 4].map((offset) => parseInt(hex[1].slice(offset, offset + 2), 16));
+    }
+
+    const shortHex = color.match(/^#([0-9a-f]{3})$/i);
+    if (shortHex) {
+      return [...shortHex[1]].map((part) => parseInt(`${part}${part}`, 16));
+    }
+
+    const rgb = color.match(/^rgb\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})\s*\)$/i);
+    if (rgb) {
+      return rgb.slice(1).map((part) => Math.min(255, Math.max(0, Number(part))));
+    }
+
+    return undefined;
+  }
+
+  _interpolateColor(min, max, ratio) {
+    const channels = min.map((value, index) => Math.round(value + (max[index] - value) * ratio));
+    return `rgb(${channels[0]} ${channels[1]} ${channels[2]})`;
+  }
+
   _sparklineCacheKey(entityId, series, column, hours, resolution) {
     return [
       entityId || "",
@@ -676,6 +728,8 @@ class TableStateCard extends HTMLElement {
       resolution,
       column.min ?? column.min_value ?? "",
       column.max ?? column.max_value ?? "",
+      column.min_color ?? column.color_min ?? "",
+      column.max_color ?? column.color_max ?? "",
     ].join("|");
   }
 

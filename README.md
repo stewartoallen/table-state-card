@@ -154,6 +154,8 @@ columns:
     recorder: true
     min: 65
     max: 80
+    min_color: "#2563eb"
+    max_color: "#dc2626"
 ```
 
 For numeric displays, `decimals` can be set globally, on a row, or on a column. The global value applies to value cells and sparkline hover values. More specific row or column settings take priority.
@@ -198,6 +200,18 @@ columns:
     key: temperature
     min: 65
     max: 80
+```
+
+Sparkline columns can also render as a compact color timeline instead of a line by setting both `min_color` and `max_color`. The colors map to the column's `min` and `max` values, or to the automatic data range when `min`/`max` are omitted. Hover behavior stays the same.
+
+```yaml
+columns:
+  - type: sparkline
+    key: temperature
+    min: 65
+    max: 80
+    min_color: "#2563eb"
+    max_color: "#dc2626"
 ```
 
 Columns can resolve entities several ways. The most flexible pattern is to give a column a `key` and put matching entity IDs on each row:
