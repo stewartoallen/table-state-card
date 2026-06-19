@@ -135,7 +135,7 @@ Supported column types:
 - `toggle`: compact toggle button using `homeassistant.toggle`
 - `name`: row label
 - `value` or `state`: current state with unit
-- `sparkline` or `history`: compact SVG sparkline from history, with hover values
+- `sparkline` or `history`: compact SVG sparkline from history, with hover values and click for more-info
 
 Each column can specify a CSS grid width:
 
@@ -219,6 +219,8 @@ columns:
 ```
 
 Additional `color_<number>` keys add optional interpolation stops between the endpoints. Endpoint colors are still required to enable color timeline rendering.
+
+In color timeline mode, adjacent intervals with the same rounded value are merged before rendering. The effective sparkline `decimals` setting controls that rounding.
 
 Columns can resolve entities several ways. The most flexible pattern is to give a column a `key` and put matching entity IDs on each row:
 

@@ -1,4 +1,4 @@
-const TABLE_STATE_CARD_VERSION = "0.1.3";
+const TABLE_STATE_CARD_VERSION = "0.1.4";
 
 class TableStateCard extends HTMLElement {
   static getConfigElement() {
@@ -445,6 +445,7 @@ class TableStateCard extends HTMLElement {
         }
 
         .cell.sparkline {
+          cursor: pointer;
           min-width: 60px;
         }
 
@@ -607,10 +608,10 @@ class TableStateCard extends HTMLElement {
     const decimals = this._sparklineDecimals(column, entry);
     const hours = this._hoursToShow(column, entry);
     const resolution = this._resolutionMinutes(column, entry);
-    const cacheKey = this._sparklineCacheKey(entityId, series, column, hours, resolution);
+    const cacheKey = this._sparklineCacheKey(entityId, series, column, hours, resolution, decimals);
     const cached = this._sparklineCache.get(cacheKey) || {};
     const points = cached.points || this._pointsFromSeries(series, hours, resolution);
-    const svg = cached.svg || this._sparklineSvg(points, column);
+    const svg = cached.svg || this._sparklineSvg(points, column, decimals);
     if (!cached.points || !cached.svg) {
       this._sparklineCache.set(cacheKey, { points, svg });
     }
@@ -641,7 +642,7 @@ class TableStateCard extends HTMLElement {
     return `0 0 ${width}`;
   }
 
-  _sparklineSvg(points, column = {}) {
+  _sparklineSvg(points, column = {}, decimals) {
     if (points.length < 2) {
       return `<svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg>`;
     }
@@ -658,7 +659,7 @@ class TableStateCard extends HTMLElement {
     const timeSpan = Math.max(1, maxTime - minTime);
     const valueSpan = Math.max(1, maxValue - minValue);
     if (colorRange) {
-      return this._sparklineColorSvg(points, minTime, timeSpan, minValue, valueSpan, colorRange);
+      return this._sparklineColorSvg(points, minTime, timeSpan, minValue, valueSpan, colorRange, decimals);
     }
 
     const coords = points.map((point) => {
@@ -673,13 +674,26 @@ class TableStateCard extends HTMLElement {
     return `<svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"><path class="fill" d="${fill}"></path><path class="line" d="${line}"></path></svg>`;
   }
 
-  _sparklineColorSvg(points, minTime, timeSpan, minValue, valueSpan, colorRange) {
-    const rects = points.slice(0, -1).map((point, index) => {
+  _sparklineColorSvg(points, minTime, timeSpan, minValue, valueSpan, colorRange, decimals) {
+    const segments = [];
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const point = points[index];
       const next = points[index + 1];
-      const x = ((point.time - minTime) / timeSpan) * 100;
-      const nextX = ((next.time - minTime) / timeSpan) * 100;
-      const width = Math.max(0.35, nextX - x);
-      const color = this._colorForSparklineValue(point.value, colorRange, minValue, valueSpan);
+      const value = this._roundedNumericValue(point.value, decimals);
+      const color = this._colorForSparklineValue(value, colorRange, minValue, valueSpan);
+      const previous = segments[segments.length - 1];
+      if (previous && previous.color === color && previous.value === value) {
+        previous.end = next.time;
+      } else {
+        segments.push({ start: point.time, end: next.time, value, color });
+      }
+    }
+
+    const rects = segments.map((segment) => {
+      const x = ((segment.start - minTime) / timeSpan) * 100;
+      const nextX = ((segment.end - minTime) / timeSpan) * 100;
+      const width = Math.max(0.35, nextX - x + 0.05);
+      const color = segment.color;
       return `<rect x="${x.toFixed(2)}" y="3" width="${width.toFixed(2)}" height="18" fill="${color}"></rect>`;
     });
 
@@ -767,12 +781,20 @@ class TableStateCard extends HTMLElement {
     return `rgb(${channels[0]} ${channels[1]} ${channels[2]})`;
   }
 
-  _sparklineCacheKey(entityId, series, column, hours, resolution) {
+  _roundedNumericValue(value, decimals) {
+    if (decimals === undefined) return value;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return value;
+    return Number(numeric.toFixed(decimals));
+  }
+
+  _sparklineCacheKey(entityId, series, column, hours, resolution, decimals) {
     return [
       entityId || "",
       this._seriesSignature(series),
       hours,
       resolution,
+      decimals ?? "",
       column.min ?? column.min_value ?? "",
       column.max ?? column.max_value ?? "",
       column.min_color ?? column.color_min ?? "",
@@ -965,10 +987,20 @@ class TableStateCard extends HTMLElement {
 
   async _handleClick(event) {
     const target = event.target.closest?.('[data-action="toggle"]');
-    if (!target || target.getAttribute("aria-disabled") === "true") return;
+    if (target) {
+      if (target.getAttribute("aria-disabled") === "true") return;
 
-    event.preventDefault();
-    event.stopPropagation();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    const sparkline = event.target.closest?.(".cell.sparkline");
+    if (sparkline?.dataset.historyEntityId) {
+      event.preventDefault();
+      event.stopPropagation();
+      this._showMoreInfo(sparkline.dataset.historyEntityId);
+    }
   }
 
   _handlePointerDown(event) {
@@ -1071,6 +1103,17 @@ class TableStateCard extends HTMLElement {
     const unit = this._hass?.states?.[entityId]?.attributes?.unit_of_measurement;
     const formatted = this._formatValue(value, Number.isFinite(decimals) ? decimals : undefined);
     return unit ? `${formatted} ${unit}` : formatted;
+  }
+
+  _showMoreInfo(entityId) {
+    if (!entityId) return;
+    this.dispatchEvent(
+      new CustomEvent("hass-more-info", {
+        bubbles: true,
+        composed: true,
+        detail: { entityId },
+      })
+    );
   }
 
   _showTooltip(x, y, detail) {
