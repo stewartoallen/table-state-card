@@ -24,8 +24,12 @@ class TableStateCard extends HTMLElement {
     this._loading = false;
     this._error = "";
     this._lastFetchKey = "";
+    this._pendingToggle = undefined;
     this.shadowRoot.addEventListener("click", (event) => this._handleClick(event));
     this.shadowRoot.addEventListener("keydown", (event) => this._handleKeyDown(event));
+    this.shadowRoot.addEventListener("pointerdown", (event) => this._handlePointerDown(event));
+    this.shadowRoot.addEventListener("pointerup", (event) => this._handlePointerUp(event));
+    this.shadowRoot.addEventListener("pointercancel", () => this._handlePointerCancel());
     this.shadowRoot.addEventListener("pointermove", (event) => this._handleSparklinePointerMove(event));
     this.shadowRoot.addEventListener("pointerleave", () => this._hideTooltip());
   }
@@ -118,7 +122,6 @@ class TableStateCard extends HTMLElement {
 
     this._loading = true;
     this._error = "";
-    this._render();
 
     const end = new Date();
     end.setSeconds(0, 0);
@@ -165,6 +168,7 @@ class TableStateCard extends HTMLElement {
         }
 
         ha-card {
+          position: relative;
           overflow: hidden;
           width: 100%;
         }
@@ -178,9 +182,21 @@ class TableStateCard extends HTMLElement {
         }
 
         .status {
-          padding: 4px 12px;
+          position: absolute;
+          top: 8px;
+          right: 12px;
+          z-index: 2;
+          max-width: calc(100% - 24px);
+          box-sizing: border-box;
+          border: 1px solid var(--divider-color);
+          border-radius: 4px;
+          background: var(--mdc-theme-surface, var(--ha-card-background, var(--card-background-color)));
           color: var(--secondary-text-color);
+          box-shadow: var(--ha-card-box-shadow, 0 3px 10px rgb(0 0 0 / 16%));
           font-size: 12px;
+          line-height: 1.3;
+          padding: 4px 8px;
+          pointer-events: none;
         }
 
         .status.error {
@@ -610,7 +626,38 @@ class TableStateCard extends HTMLElement {
 
     event.preventDefault();
     event.stopPropagation();
-    const entityId = target.dataset.entityId;
+  }
+
+  _handlePointerDown(event) {
+    const target = event.target.closest?.('[data-action="toggle"]');
+    if (!target || target.getAttribute("aria-disabled") === "true") return;
+
+    this._pendingToggle = {
+      entityId: target.dataset.entityId,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+    };
+  }
+
+  _handlePointerUp(event) {
+    const pending = this._pendingToggle;
+    this._pendingToggle = undefined;
+    if (!pending || pending.pointerId !== event.pointerId) return;
+
+    const moved = Math.hypot(event.clientX - pending.x, event.clientY - pending.y);
+    if (moved > 8) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    this._toggleEntity(pending.entityId);
+  }
+
+  _handlePointerCancel() {
+    this._pendingToggle = undefined;
+  }
+
+  async _toggleEntity(entityId) {
     if (!entityId || !this._hass) return;
 
     try {
@@ -625,10 +672,11 @@ class TableStateCard extends HTMLElement {
     if (event.key !== "Enter" && event.key !== " ") return;
 
     const target = event.target.closest?.('[data-action="toggle"]');
-    if (!target) return;
+    if (!target || target.getAttribute("aria-disabled") === "true") return;
 
     event.preventDefault();
-    target.click();
+    event.stopPropagation();
+    this._toggleEntity(target.dataset.entityId);
   }
 
   _handleSparklinePointerMove(event) {
