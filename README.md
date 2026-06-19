@@ -110,6 +110,7 @@ entities:
 | `sparkline_decimals` | number | `decimals` | Global decimal places for sparkline hover values. |
 | `resolution_minutes` | number | `0` | Global sparkline averaging interval in minutes. `0` uses raw history samples. |
 | `bucket_minutes` | number | `0` | Alias for `resolution_minutes`. |
+| `recorder` | boolean | `true` | Use Home Assistant recorder statistics for eligible sparkline entities when `resolution_minutes` matches a statistics period. Falls back to raw history. |
 | `column_span` | number | none | Suggested Home Assistant section-grid column span. |
 | `view_layout` | object | none | Optional HA/layout-card layout options such as `grid-column`. |
 | `entities[].entity` | string | none | Main row entity. Used for toggle/value/history unless overridden. |
@@ -122,6 +123,7 @@ entities:
 | `entities[].<key>_decimals` | number | row/global | Decimal places for a keyed sparkline/value entity such as `temperature_decimals`. |
 | `entities[].hours_to_show` | number | global | Row-level sparkline history range in hours. |
 | `entities[].resolution_minutes` | number | global | Row-level sparkline averaging interval in minutes. |
+| `entities[].recorder` | boolean | global | Row-level recorder statistics override for sparkline history. |
 | `entities[].<key>` | string | none | Named entity reference used by a column with matching `key`, `name`, or `id`. |
 | `entities[].color` | string | theme primary | Sparkline stroke color. |
 | `entities[].fill` | string | theme primary tint | Sparkline fill color. |
@@ -149,6 +151,7 @@ columns:
     sparkline_decimals: 1
     hours_to_show: 12
     resolution_minutes: 5
+    recorder: true
     min: 65
     max: 80
 ```
@@ -184,6 +187,8 @@ columns:
 ```
 
 `hours_to_show` controls the visible sparkline span. `resolution_minutes` averages raw history samples into fixed time buckets before drawing and before hover lookup.
+
+When `recorder` is enabled, `resolution_minutes: 5`, `15`, or `30` tries Home Assistant 5-minute recorder statistics first. `resolution_minutes: 60` tries hourly statistics. Entities without recorder statistics fall back to raw history automatically.
 
 Sparkline columns can set `min` and/or `max` to fix the vertical range for that column:
 

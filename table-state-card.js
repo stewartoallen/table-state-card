@@ -1,4 +1,4 @@
-const TABLE_STATE_CARD_VERSION = "0.0.9";
+const TABLE_STATE_CARD_VERSION = "0.1.1";
 
 class TableStateCard extends HTMLElement {
   static getConfigElement() {
@@ -24,6 +24,10 @@ class TableStateCard extends HTMLElement {
     this._loading = false;
     this._error = "";
     this._lastFetchKey = "";
+    this._historyFetchSignature = "";
+    this._loadedEndMs = undefined;
+    this._lastStateSignature = "";
+    this._sparklineCache = new Map();
     this._pendingToggle = undefined;
     this.shadowRoot.addEventListener("click", (event) => this._handleClick(event));
     this.shadowRoot.addEventListener("keydown", (event) => this._handleKeyDown(event));
@@ -46,10 +50,15 @@ class TableStateCard extends HTMLElement {
       decimals: undefined,
       sparkline_decimals: undefined,
       resolution_minutes: 0,
+      recorder: true,
       columns: ["toggle", "name", "value", "sparkline"],
       ...config,
     };
     this._lastFetchKey = "";
+    this._historyFetchSignature = "";
+    this._loadedEndMs = undefined;
+    this._lastStateSignature = "";
+    this._sparklineCache.clear();
     this._render();
   }
 
@@ -75,7 +84,11 @@ class TableStateCard extends HTMLElement {
       return;
     }
 
-    this._render();
+    const stateSignature = this._stateSignature();
+    if (stateSignature !== this._lastStateSignature) {
+      this._lastStateSignature = stateSignature;
+      this._render();
+    }
   }
 
   getCardSize() {
@@ -105,6 +118,31 @@ class TableStateCard extends HTMLElement {
     ];
   }
 
+  _stateEntityIds() {
+    return [
+      ...new Set(
+        this._entityConfigs().flatMap((entry) =>
+          this._columns()
+            .filter((column) => {
+              const type = this._columnType(column);
+              return type === "toggle" || type === "value" || type === "state";
+            })
+            .map((column) => this._resolveEntity(entry, column, this._columnType(column) === "toggle" ? "toggle" : "value"))
+            .filter(Boolean)
+        )
+      ),
+    ];
+  }
+
+  _stateSignature() {
+    return this._stateEntityIds()
+      .map((entityId) => {
+        const stateObj = this._hass?.states?.[entityId];
+        return [entityId, stateObj?.state || "", stateObj?.last_changed || "", stateObj?.last_updated || ""].join(":");
+      })
+      .join("|");
+  }
+
   _maxHoursToShow() {
     const hours = this._entityConfigs().flatMap((entry) =>
       this._columns()
@@ -125,7 +163,16 @@ class TableStateCard extends HTMLElement {
 
     const end = new Date();
     end.setSeconds(0, 0);
-    const start = new Date(end.getTime() - this._maxHoursToShow() * 60 * 60 * 1000);
+    const endMs = end.getTime();
+    const startMs = endMs - this._maxHoursToShow() * 60 * 60 * 1000;
+    const signature = [entityIds.join(","), this._maxHoursToShow()].join("|");
+    const fullFetch =
+      signature !== this._historyFetchSignature ||
+      !Number.isFinite(this._loadedEndMs) ||
+      this._loadedEndMs < startMs;
+    const overlapMs = 2 * 60 * 1000;
+    const fetchStartMs = fullFetch ? startMs : Math.max(startMs, this._loadedEndMs - overlapMs);
+    const fetchStart = new Date(fetchStartMs);
     const params = new URLSearchParams({
       filter_entity_id: entityIds.join(","),
       end_time: end.toISOString(),
@@ -134,23 +181,182 @@ class TableStateCard extends HTMLElement {
     params.set("no_attributes", "");
 
     try {
-      const response = await this._hass.callApi(
-        "GET",
-        `history/period/${encodeURIComponent(start.toISOString())}?${params.toString()}`
-      );
-      const nextHistory = new Map();
+      const nextHistory = fullFetch ? new Map() : new Map(this._history);
+
+      const recorderHistory = await this._fetchRecorderHistory(fetchStartMs, endMs);
+      for (const [entityId, series] of recorderHistory.entries()) {
+        nextHistory.set(
+          entityId,
+          fullFetch ? this._prunedHistorySeries(series, startMs) : this._mergedHistorySeries(nextHistory.get(entityId), series, startMs)
+        );
+      }
+
+      const historyEntityIds = entityIds.filter((entityId) => !recorderHistory.has(entityId));
+      let response = [];
+      if (historyEntityIds.length > 0) {
+        const historyParams = new URLSearchParams(params);
+        historyParams.set("filter_entity_id", historyEntityIds.join(","));
+        response = await this._hass.callApi(
+          "GET",
+          `history/period/${encodeURIComponent(fetchStart.toISOString())}?${historyParams.toString()}`
+        );
+      }
+
       for (const series of response || []) {
         if (!series.length) continue;
-        const entityId = series.find((item) => item.entity_id)?.entity_id;
-        if (entityId) nextHistory.set(entityId, series);
+        const entityId = this._seriesEntityId(series, historyEntityIds);
+        if (!entityId) continue;
+        nextHistory.set(
+          entityId,
+          fullFetch ? this._prunedHistorySeries(series, startMs) : this._mergedHistorySeries(nextHistory.get(entityId), series, startMs)
+        );
       }
+
+      for (const entityId of historyEntityIds) {
+        if (!nextHistory.has(entityId) && this._hass.states[entityId]) {
+          nextHistory.set(entityId, [this._hass.states[entityId]]);
+        }
+      }
+
+      for (const entityId of [...nextHistory.keys()]) {
+        if (!entityIds.includes(entityId)) {
+          nextHistory.delete(entityId);
+          continue;
+        }
+        nextHistory.set(entityId, this._prunedHistorySeries(nextHistory.get(entityId), startMs));
+      }
+
       this._history = nextHistory;
+      this._historyFetchSignature = signature;
+      this._loadedEndMs = endMs;
+      this._lastStateSignature = this._stateSignature();
+      this._sparklineCache.clear();
     } catch (err) {
       this._error = err?.message || String(err);
     } finally {
       this._loading = false;
       this._render();
     }
+  }
+
+  _seriesEntityId(series, requestedEntityIds = []) {
+    const entityId = series.find((item) => item.entity_id)?.entity_id;
+    if (entityId) return entityId;
+    return requestedEntityIds.length === 1 ? requestedEntityIds[0] : "";
+  }
+
+  async _fetchRecorderHistory(startMs, endMs) {
+    if (!this._hass?.callWS) return new Map();
+
+    const candidates = this._recorderCandidates();
+    if (candidates.size === 0) return new Map();
+
+    const byPeriod = new Map();
+    for (const [entityId, period] of candidates.entries()) {
+      if (!byPeriod.has(period)) byPeriod.set(period, []);
+      byPeriod.get(period).push(entityId);
+    }
+
+    const history = new Map();
+    for (const [period, entityIds] of byPeriod.entries()) {
+      let result;
+      try {
+        result = await this._hass.callWS({
+          type: "recorder/statistics_during_period",
+          start_time: new Date(startMs).toISOString(),
+          end_time: new Date(endMs).toISOString(),
+          statistic_ids: entityIds,
+          period,
+          types: ["mean"],
+        });
+      } catch (err) {
+        console.warn("[table-state-card] recorder statistics unavailable; falling back to history", err);
+        continue;
+      }
+
+      for (const entityId of entityIds) {
+        const series = this._statisticsSeriesToHistory(entityId, result?.[entityId], startMs, endMs);
+        if (series.length > 0) history.set(entityId, series);
+      }
+    }
+
+    return history;
+  }
+
+  _recorderCandidates() {
+    const candidates = new Map();
+
+    for (const entry of this._entityConfigs()) {
+      for (const column of this._columns()) {
+        const type = this._columnType(column);
+        if (type !== "sparkline" && type !== "history") continue;
+
+        if (!this._recorderEnabled(column, entry)) continue;
+
+        const entityId = this._resolveEntity(entry, column, "history");
+        const period = this._recorderPeriod(this._resolutionMinutes(column, entry));
+        if (!entityId || !period) continue;
+
+        const existing = candidates.get(entityId);
+        if (!existing || existing === "hour") candidates.set(entityId, period);
+      }
+    }
+
+    return candidates;
+  }
+
+  _recorderEnabled(column = {}, entry = {}) {
+    return column.recorder ?? entry.recorder ?? this._config?.recorder ?? true;
+  }
+
+  _recorderPeriod(resolutionMinutes) {
+    if ([5, 15, 30].includes(Number(resolutionMinutes))) return "5minute";
+    if (Number(resolutionMinutes) === 60) return "hour";
+    return "";
+  }
+
+  _statisticsSeriesToHistory(entityId, statistics = [], startMs = 0, endMs = 0) {
+    return (statistics || [])
+      .map((point) => {
+        const changed = this._statisticsTimeMs(point.start);
+        const state = Number(point.mean);
+        if (!Number.isFinite(changed) || !Number.isFinite(state) || changed < startMs || changed > endMs) return undefined;
+
+        return {
+          entity_id: entityId,
+          state: String(state),
+          last_changed: new Date(changed).toISOString(),
+          last_updated: new Date(changed).toISOString(),
+          __source: "recorder",
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => Date.parse(a.last_changed || a.last_updated) - Date.parse(b.last_changed || b.last_updated));
+  }
+
+  _statisticsTimeMs(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : Date.parse(value);
+  }
+
+  _mergedHistorySeries(existing = [], incoming = [], startMs = 0) {
+    return this._prunedHistorySeries([...(existing || []), ...(incoming || [])], startMs);
+  }
+
+  _prunedHistorySeries(series = [], startMs = 0) {
+    const seen = new Set();
+    return (series || [])
+      .filter((item) => {
+        const time = Date.parse(item.last_changed || item.last_updated);
+        return !Number.isFinite(time) || time >= startMs;
+      })
+      .sort((a, b) => Date.parse(a.last_changed || a.last_updated) - Date.parse(b.last_changed || b.last_updated))
+      .filter((item) => {
+        const key = [item.entity_id || "", item.last_changed || "", item.last_updated || "", item.state || ""].join("|");
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
   }
 
   _render() {
@@ -401,14 +607,22 @@ class TableStateCard extends HTMLElement {
     const decimals = this._sparklineDecimals(column, entry);
     const hours = this._hoursToShow(column, entry);
     const resolution = this._resolutionMinutes(column, entry);
-    const points = this._pointsFromSeries(series, hours, resolution);
+    const cacheKey = this._sparklineCacheKey(entityId, series, column, hours, resolution);
+    const cached = this._sparklineCache.get(cacheKey) || {};
+    const points = cached.points || this._pointsFromSeries(series, hours, resolution);
+    const svg = cached.svg || this._sparklineSvg(points, column);
+    if (!cached.points || !cached.svg) {
+      this._sparklineCache.set(cacheKey, { points, svg });
+    }
     return `<div class="cell sparkline" data-history-entity-id="${this._escapeAttr(entityId || "")}" data-decimals="${this._escapeAttr(
       decimals ?? ""
     )}" data-hours="${this._escapeAttr(hours)}" data-resolution="${this._escapeAttr(
       resolution
+    )}" data-cache-key="${this._escapeAttr(
+      cacheKey
     )}" style="${this._cellStyle(column)};--sparkline-color:${this._escapeAttr(color)};--sparkline-fill-color:${this._escapeAttr(
       fill
-    )}">${this._sparklineSvg(points, column)}</div>`;
+    )}">${svg}</div>`;
   }
 
   _cellStyle(column) {
@@ -452,6 +666,29 @@ class TableStateCard extends HTMLElement {
     const fill = `${line} L 100 24 L 0 24 Z`;
 
     return `<svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"><path class="fill" d="${fill}"></path><path class="line" d="${line}"></path></svg>`;
+  }
+
+  _sparklineCacheKey(entityId, series, column, hours, resolution) {
+    return [
+      entityId || "",
+      this._seriesSignature(series),
+      hours,
+      resolution,
+      column.min ?? column.min_value ?? "",
+      column.max ?? column.max_value ?? "",
+    ].join("|");
+  }
+
+  _seriesSignature(series = []) {
+    const first = series[0];
+    const last = series[series.length - 1];
+    return [
+      series.length,
+      first?.last_changed || first?.last_updated || "",
+      first?.state || "",
+      last?.last_changed || last?.last_updated || "",
+      last?.state || "",
+    ].join(":");
   }
 
   _columnType(column) {
@@ -690,7 +927,8 @@ class TableStateCard extends HTMLElement {
     const series = this._history.get(entityId) || [];
     const hours = Number(cell.dataset.hours) || Number(this._config?.hours_to_show) || 6;
     const resolution = Number(cell.dataset.resolution) || 0;
-    const points = this._pointsFromSeries(series, hours, resolution);
+    const cached = this._sparklineCache.get(cell.dataset.cacheKey);
+    const points = cached?.points || this._pointsFromSeries(series, hours, resolution);
 
     if (points.length === 0) {
       this._hideTooltip();
